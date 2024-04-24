@@ -41,7 +41,7 @@ for step=1:nsteps
   keep = [not(remove), divide];
   if sum(keep)>max_size
     break;
-  endif
+  end
   % - new node wiring
   k_fi = K(5, :);
   k_fa = K(6, :);
@@ -67,4 +67,4 @@ for step=1:nsteps
   state_output = state_slp * C;
   S = state_output==max(state_output,[],1);
   % Update cycle complete
-endfor  
+end

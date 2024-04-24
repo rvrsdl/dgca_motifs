@@ -16,7 +16,8 @@ import matplotlib.pyplot as plt
 
 def rindex(it, li) -> int:
     """
-    Index of last occurence of item in list
+    Reverse index ie. the
+    index of last occurence of item in list
     """
     return len(li) - 1 - li[::-1].index(it)
 
@@ -24,7 +25,7 @@ def rindex(it, li) -> int:
 @dataclass
 class GraphDef:
     A: np.ndarray # n*n
-    S: np.ndarray # n*d
+    S: np.ndarray # s*d
     num_states: int = 0
 
     def __post_init__(self) -> None:
@@ -37,6 +38,9 @@ class GraphDef:
         self.num_states = self.S.shape[0]
         self.A = self.A.astype(np.bool_)
         self.S = self.S.astype(np.bool_)
+
+    def __str__(self) -> str:
+        return f"Graph with {self.size()} nodes and {self.num_edges()} edges"
 
     def size(self) -> int:
         return self.A.shape[0]
@@ -63,9 +67,10 @@ class GraphDef:
     def to_edgelist(self) -> np.ndarray:
         """
         Returns an E*3 numpy array in the format
-        source, target
-        source, target
+        source, target, weight
+        source, target, weight
         etc.
+        (in this case weights are all 1)
         """
         es = np.nonzero(self.A)
         edge_list = np.array([es[0], es[1], self.A[es]]).T
@@ -90,7 +95,7 @@ class GraphDef:
         g.add_edge_list(self.to_edgelist())
         if basic:
             return g
-        states = g.new_vertex_property('int', self.S.T.tolist())
+        states = g.new_vertex_property('int', self.states_1d())
         g.vp['state'] = states # make into an "internal" property
         # Set node colours for plotting
         # Same colours as same as in plot_space_time
@@ -102,8 +107,20 @@ class GraphDef:
     
     def is_isomorphic(self, other: GraphDef) -> bool:
         """
-        Checks if this graph is isomorhpic with another, conditional on states.
+        Checks if this graph is isomorhpic with another, conditional on node states.
         """
+        ne1 = self.num_edges()
+        ne2 = other.num_edges()
+        if ne1!=ne2:
+            return False
+        if ne1==0:
+            # Neither have any edges: structure doesn't matter so just check states match
+            s1 = self.states_1d()
+            s2 = other.states_1d()
+            s1.sort()
+            s2.sort()
+            return s1==s2 
+        # Use graph-tool to check for isomorphism
         gt1, gt2 = self.to_gt(), other.to_gt()
         # Despite the function name, if you set subgraph=False, it does whole graph isomorphism
         # The vertex_label param is used to condition the isomorphism on node state.
@@ -113,6 +130,31 @@ class GraphDef:
         # is isomorphic if at least one mapping was found
         return False if len(mapping)==0 else True
         
+    def draw_gt(self, draw_edge_wgt: bool = False,
+                 pos: gt.VertexPropertyMap | None = None,
+                 interactive: bool = False,
+                 **kwargs) -> gt.VertexPropertyMap:
+        """
+        Draws a the graph using the graph-tool library 
+        Relies on node and edge properties set by to_gt()
+        Returns the node positions, which can then be passed in at the next
+        call so that original nodes don't move to much if you are adding more etc.
+        NB use output=filename to write to a file.
+        """
+        if self.size()==0:
+            print('Empty graph - can''t draw')
+            return None
+            #TODO: will this break if called inside a plotting routine?
+        g = self.to_gt(pos=pos)
+        if draw_edge_wgt:
+            edge_pen_width = gt.prop_to_size(g.ep.abswgt,mi=1,ma=7)
+        else:
+            edge_pen_width = None
+        if interactive:
+            pos_out = gt.interactive_window(g, pos=g.vp['pos'], vertex_fill_color=g.vp.plot_colour, edge_pen_width=edge_pen_width, **kwargs)
+        else:
+            pos_out = gt.graph_draw(g, pos=g.vp['pos'], vertex_fill_color=g.vp.plot_colour, edge_pen_width=edge_pen_width, **kwargs)
+            return pos_out
 
 class DGCA:
     """
@@ -122,7 +164,7 @@ class DGCA:
     def __init__(self, num_states: int,
                  action_info_bidirectional: bool = True,
                  action_info_renorm: bool = True,
-                 state_info_bidirectional: bool = False,
+                 state_info_bidirectional: bool = True,
                  state_info_renorm: bool = True) -> None:
         self.num_states = num_states
         self.action_info_bidirectional = action_info_bidirectional
@@ -148,7 +190,7 @@ class DGCA:
             # Do this after appending bias to avoid dividing by zero
             out = out / np.max(np.abs(out), axis=0, keepdims=True)
             # Reset bias to 1 (??)
-            out[-1,:] = np.ones(S.shape[1])
+            #out[-1,:] = np.ones(S.shape[1])
         return out
     
     def action_update(self, G: GraphDef) -> tuple[np.ndarray, np.ndarray]:
@@ -208,10 +250,7 @@ class Runner:
     (so can stop early).
     """
 
-    def __init__(self, dgca: DGCA, seed_graph: GraphDef, 
-                 max_steps: int, max_size: int) -> None:
-        self.dgca = dgca
-        self.seed_graph = seed_graph
+    def __init__(self, max_steps: int, max_size: int) -> None:
         self.max_steps = max_steps
         self.max_size = max_size
         self.graphs: list[GraphDef] = []
@@ -238,28 +277,33 @@ class Runner:
         else:
             return False
 
-    def run(self) -> None:
+    def run(self, dgca: DGCA, seed_graph: GraphDef) -> GraphDef:
         """
         Runs for the full number of steps or stops early if the
         graph becomes too big or the system enters an attractor.
         """
-        current_graph = self.seed_graph
+        current_graph = seed_graph
         self.record(current_graph)
         for i in range(self.max_steps):
-            current_graph = self.dgca.step(current_graph)
-            if current_graph.size() == 0:
+            next_graph = dgca.step(current_graph)
+            if next_graph.size() == 0:
                 self.status = 'zero_nodes'
-            if current_graph.size() > self.max_size:
+                self.record(next_graph)
+                return next_graph
+            if next_graph.size() > self.max_size:
                 self.status = 'max_size'
-                break
-            if self.already_seen(current_graph):
+                self.record(next_graph)
+                return current_graph # because next_graph is too big
+            if self.already_seen(next_graph):
                 # We are in an attractor so no need to go further
                 # Add it to the record anyway so that we can spot the cycle
-                self.record(current_graph)
                 self.status = 'attractor'
-                break
-            self.record(current_graph)
+                self.record(next_graph)
+                return next_graph
+            self.record(next_graph)
+            current_graph = next_graph
         self.status = 'max_steps'
+        return current_graph
 
     def graph_size(self) -> list[int]:
         """
@@ -291,9 +335,19 @@ class Runner:
         trans_len = len(self.hashes) - attr_len
         return trans_len, attr_len
 # %%
-dgca = DGCA(num_states=3)
-seed = GraphDef(np.array([[1]]), np.array([[1,0,0]]).T)
-runner = Runner(dgca, seed, max_steps=10, max_size=100)
-runner.run()
-#%%
+for i in range(1000):
+    dgca = DGCA(num_states=3)
+    seed = GraphDef(np.array([[0]]), np.array([[1,0,0]]).T)
+    runner = Runner(max_steps=100, max_size=500)
+    out = runner.run(dgca, seed)
+    if out.size()>20 and out.num_edges()>out.size()+5:
+        break
+print(out)
+print(f"{runner.status} after {len(runner.hashes)} steps")
+#%%#
+g = out.to_gt()
+gt.remove_self_loops(g)
+gt.graph_draw(g, vertex_fill_color=g.vp.plot_colour)
 # 1, 2, 3, 2f, 4, 5, 2
+
+# %%

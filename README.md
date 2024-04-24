@@ -2,7 +2,7 @@
 This repository will contain the code used in a paper submitted to the ALife 2024 conference.
 
 ## Contents
-- `dgcav2_demo.m`: A minimal MATLAB/Octave implementation of the DGCA v2 system, using the Kroneckor tensor poduct graph update procedure as described in the paper. 
+- `dgcav2_demo.m`: A minimal MATLAB/Octave implementation of the DGCA v2 system, using the Kroneckor tensor poduct graph update procedure as described in the paper. Just designed to illustrate how the system works
 - `dgca.py`: A more complete Python implementation of the DGCA v2 system, which was used to run the experiments in the paper.
 - `evolve.py`: An implementation of the Microbial Genetic Algorithm for the DGCA SLP weights, including the use of separate "chromosomes" as described in the paper.
 - `motif_random_search.py` - Runs the random search experiment.
