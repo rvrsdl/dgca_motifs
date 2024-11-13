@@ -8,11 +8,8 @@ from multiset import FrozenMultiset
 import numpy as np
 import graph_tool.all as gt
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 #%%
-
-        # self.A, self.S = seed_graph
-        # assert self.A.shape[0]==self.A.shape[1], "Seed graph adjacency matrix must be square"
-        # assert self.A.shape[0]==self.S.shape[1], "Seed graph adjacnecy and state matrices are incompatible sizes"
 
 def rindex(it, li) -> int:
     """
@@ -25,7 +22,7 @@ def rindex(it, li) -> int:
 @dataclass
 class GraphDef:
     A: np.ndarray # n*n
-    S: np.ndarray # s*d
+    S: np.ndarray # s*n
     num_states: int = 0
 
     def __post_init__(self) -> None:
@@ -126,7 +123,8 @@ class GraphDef:
         # The vertex_label param is used to condition the isomorphism on node state.
         mapping = gt.subgraph_isomorphism(gt1, gt2, 
                                 vertex_label=[gt1.vp.state, gt2.vp.state],
-                                subgraph=False) 
+                                subgraph=False)
+        #TODO: timeout
         # is isomorphic if at least one mapping was found
         return False if len(mapping)==0 else True
         
@@ -155,6 +153,16 @@ class GraphDef:
         else:
             pos_out = gt.graph_draw(g, pos=g.vp['pos'], vertex_fill_color=g.vp.plot_colour, edge_pen_width=edge_pen_width, **kwargs)
             return pos_out
+        
+    def no_selfloops(self) -> GraphDef:
+        """
+        Returns a copy of the graph in which all self-loops have been removed
+        """
+        out_A = self.A.copy()
+        # set values on the diagonal to zero
+        out_A[np.eye(out_A.shape[0], dtype=np.bool_)] = 0 
+        return GraphDef(out_A, S.copy(), self.num_states)
+    
 
 class DGCA:
     """
@@ -264,6 +272,11 @@ class Runner:
         self.graphs.append(G)
         self.hashes.append(G.state_hash())
 
+    def reset(self):
+        self.graphs: list[GraphDef] = []
+        self.hashes: list[int] = []
+        self.status = 'ready'
+
     def already_seen(self, G: GraphDef) -> None:
         this_hash = G.state_hash()
         if this_hash in self.hashes:
@@ -335,12 +348,12 @@ class Runner:
         trans_len = len(self.hashes) - attr_len
         return trans_len, attr_len
 # %%
-for i in range(1000):
+for i in tqdm(range(1000)):
     dgca = DGCA(num_states=3)
-    seed = GraphDef(np.array([[0]]), np.array([[1,0,0]]).T)
+    seed = GraphDef(np.array([[1,1,0],[0,0,1],[1,0,0]]), np.array([[1,0,0],[0,1,0],[0,1,0]]).T)
     runner = Runner(max_steps=100, max_size=500)
     out = runner.run(dgca, seed)
-    if out.size()>20 and out.num_edges()>out.size()+5:
+    if runner.status=='attractor' and out.size()>100:
         break
 print(out)
 print(f"{runner.status} after {len(runner.hashes)} steps")
@@ -350,4 +363,6 @@ gt.remove_self_loops(g)
 gt.graph_draw(g, vertex_fill_color=g.vp.plot_colour)
 # 1, 2, 3, 2f, 4, 5, 2
 
+# %%
+g.save('blah4.dot')
 # %%
