@@ -1,0 +1,11 @@
+dependencies:
+  - numpy
+  - matplotlib
+  - tqdm
+  - jsonpickle
+  - conda-forge::zstandard
+  - conda-forge::graph-tool
+  - conda-forge::multiset
+  - ipykernel
+  - pip:
+    - wrapt-timeout-decorator

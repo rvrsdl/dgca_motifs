@@ -8,21 +8,42 @@ from multiset import FrozenMultiset
 import numpy as np
 import graph_tool.all as gt
 import matplotlib.pyplot as plt
+from scipy.sparse.csgraph import connected_components
 from tqdm import tqdm
+from wrapt_timeout_decorator.wrapt_timeout_decorator import timeout
+import jsonpickle
+import jsonpickle.ext.numpy as jsonpickle_numpy
+jsonpickle_numpy.register_handlers()
 #%%
 
 def rindex(it, li) -> int:
     """
-    Reverse index ie. the
+    Reverse index() ie.
     index of last occurence of item in list
     """
     return len(li) - 1 - li[::-1].index(it)
 
+def onehot(x: np.ndarray) -> np.ndarray:
+    """
+    One-hot helper function. Turns an array of floats into a boolean array with 
+    one True value per row (in the location of the highest valued float of each row).
+    """
+    return x == np.max(x, axis=1, keepdims=True)
 
 @dataclass
 class GraphDef:
+    """
+    Just holds the basic info about a single graph:
+    - A: its adjacency matrix. dimensions: (n,n)
+    - S: its states matri - each row is a one-hot representation 
+         of that node's state. dimensions: (n*s)
+    Also has various utility methods.
+    - draw_gt() is useful for displaying the graph using the graph-tool
+      librar's drawing functionality.
+    """
+
     A: np.ndarray # n*n
-    S: np.ndarray # s*n
+    S: np.ndarray # n*s
     num_states: int = 0
 
     def __post_init__(self) -> None:
@@ -31,10 +52,10 @@ class GraphDef:
         And change to smaller dtypes
         """
         assert self.A.shape[0]==self.A.shape[1], "Adjacency matrix must be square"
-        assert self.A.shape[1]==self.S.shape[1], "Adjacency and State matrix sizes don't match"
-        self.num_states = self.S.shape[0]
-        self.A = self.A.astype(np.bool_)
-        self.S = self.S.astype(np.bool_)
+        assert self.A.shape[0]==self.S.shape[0], "Adjacency and State matrix sizes don't match"
+        self.num_states = self.S.shape[1]
+        # self.A = self.A.astype(np.bool_)
+        # self.S = self.S.astype(np.bool_)
 
     def __str__(self) -> str:
         return f"Graph with {self.size()} nodes and {self.num_edges()} edges"
@@ -51,6 +72,34 @@ class GraphDef:
         else:
             return 0 # or could do np.nan?
         
+    def get_components(self) -> tuple[np.ndarray]:
+        """
+        Returns a number for each node indicating which component
+        it is part of.
+        eg. [1,1,2,2,1] means nodes 0,1,4 form one connected component
+        and nodes 2&3 form another.
+        """
+        # use scipy.sparse.csgraph.connected_components to identify connected
+        # components. Treat graph as undirected because we don't care which 
+        # way the edges are going for theses purposes.
+        _, cc = connected_components(self.A, directed=False)
+        # count number of nodes in each component (will be sorted by component label 0->n_components)
+        _, counts = np.unique(cc, return_counts=True)
+        # TODO: would it be better to use graph_tool.topology.label_components
+        # (fewer dependencies, but required converting to gt.Graph first.)
+        return cc, counts
+    
+    def get_largest_component_frac(self) -> float:
+        """
+        Returns the size of the largest component as a fraction of 
+        the total number of nodes in the graph.
+        """
+        if self.size()==0:
+            return 0
+        else:
+            _, component_sizes = self.get_components()
+            return np.max(component_sizes) / self.size()
+
     def state_hash(self) -> int:
         """
         Returns a hash of all the nieghbourhood state info.
@@ -76,11 +125,13 @@ class GraphDef:
     def states_1d(self) -> list[int]:
         """
         Converts states out of one-hot encoding into a list of ints.
-        eg. [[1,0,0,0],[0,1,1,0],[0,0,0,1]] -> [0,1,1,2]
+        eg. [[1,0,0,0],[0,0,1,0],[0,0,0,1]] -> [0,2,3]
         """
-        return np.argmax(self.S, axis=0).tolist()
+        return np.argmax(self.S, axis=1).tolist()
+    
 
-    def to_gt(self, basic: bool = False) -> gt.Graph:
+    def to_gt(self, basic: bool = False,
+              pos: gt.VertexPropertyMap | None = None) -> gt.Graph:
         """
         Converts it to a graph-tool graph.
         Good for visualisation and isomorphism checks.
@@ -88,23 +139,29 @@ class GraphDef:
         Use basic=True if you just want the graph structure
         and don't care about states, node colours etc.
         """
-        g = gt.Graph(self.size())
-        g.add_edge_list(self.to_edgelist())
-        if basic:
-            return g
-        states = g.new_vertex_property('int', self.states_1d())
-        g.vp['state'] = states # make into an "internal" property
-        # Set node colours for plotting
-        # Same colours as same as in plot_space_time
-        states_1d = self.states_1d()
-        cmap = plt.get_cmap('viridis', self.num_states+1)
-        state_colours = cmap(states_1d)
-        g.vp['plot_colour'] =  g.new_vertex_property('vector<double>', state_colours)
-        return g    
+        num_nodes = self.size()
+        #es = np.nonzero(self.graph_mat)
+        #edge_list = np.array([es[0], es[1], self.graph_mat[es], np.abs(self.graph_mat[es])]).T
+        edge_list = self.to_edgelist()
+        g = gt.Graph(num_nodes)
+        g.add_edge_list(edge_list, eprops=[("wgt","double")])
+        if not basic:
+            states = g.new_vertex_property('int', self.states_1d())
+            g.vp['state'] = states # make into an "internal" property
+            # Set node colours for plotting
+            # Same colours as same as in plot_space_time
+            states_1d = self.states_1d()
+            cmap = plt.get_cmap('viridis', self.num_states+1)
+            state_colours = cmap(states_1d)
+            g.vp['plot_colour'] =  g.new_vertex_property('vector<double>', state_colours)
+            g.vp['pos'] = gt.sfdp_layout(g,pos=pos)
+        return g
     
+    @timeout(5, use_signals=False)
     def is_isomorphic(self, other: GraphDef) -> bool:
         """
         Checks if this graph is isomorhpic with another, conditional on node states.
+        The decorator makes this function raise a timeout error if it takes longer than 5 seconds.
         """
         ne1 = self.num_edges()
         ne2 = other.num_edges()
@@ -124,7 +181,6 @@ class GraphDef:
         mapping = gt.subgraph_isomorphism(gt1, gt2, 
                                 vertex_label=[gt1.vp.state, gt2.vp.state],
                                 subgraph=False)
-        #TODO: timeout
         # is isomorphic if at least one mapping was found
         return False if len(mapping)==0 else True
         
@@ -161,7 +217,7 @@ class GraphDef:
         out_A = self.A.copy()
         # set values on the diagonal to zero
         out_A[np.eye(out_A.shape[0], dtype=np.bool_)] = 0 
-        return GraphDef(out_A, S.copy(), self.num_states)
+        return GraphDef(out_A, self.S.copy(), self.num_states)
     
 
 class DGCA:
@@ -181,45 +237,43 @@ class DGCA:
         self.state_info_renorm = state_info_renorm
         action_slp_inp_size = 3*num_states+1 if action_info_bidirectional else 2*num_states+1
         state_slp_inp_size = 3*num_states+1 if state_info_bidirectional else 2*num_states+1
-        self.action_slp_wgts = np.random.uniform(low=-1, high=1, size=(15, action_slp_inp_size))
-        self.state_slp_wgts = np.random.uniform(low=-1, high=1, size=(self.num_states, state_slp_inp_size))
+        self.action_slp_wgts = np.random.uniform(low=-1, high=1, size=(action_slp_inp_size, 15))
+        self.state_slp_wgts = np.random.uniform(low=-1, high=1, size=(state_slp_inp_size, self.num_states))
 
 
     @staticmethod
     def gather_neighbourhood_info(G: GraphDef,
                                 bidirectional: bool, renorm: bool) -> np.ndarray:
         A, S = G.A, G.S
-        out = np.vstack((S, S @ A))
+        # Equations #4 and #5 in paper
+        out = np.hstack((S, A @ S)) # dims: (n,2s)
         if bidirectional:
-            out = np.vstack((out, S @ A.T))
-        # Append bias row of ones
-        out = np.vstack((out, np.ones(S.shape[1])))
+            out = np.hstack((out, A.T @ S)) # dims: (n,3s)
+        # Append bias col of ones
+        out = np.hstack((out, np.ones((S.shape[0],1))))
         if renorm:
             # Do this after appending bias to avoid dividing by zero
-            out = out / np.max(np.abs(out), axis=0, keepdims=True)
+            out = out / np.max(np.abs(out), axis=1, keepdims=True)
             # Reset bias to 1 (??)
-            #out[-1,:] = np.ones(S.shape[1])
+            #out[:,-1] = np.ones((S.shape[0],1))
         return out
     
     def action_update(self, G: GraphDef) -> tuple[np.ndarray, np.ndarray]:
         C = self.gather_neighbourhood_info(G, self.action_info_bidirectional, self.action_info_renorm)
-        D = self.action_slp_wgts @ C
+        D = C @ self.action_slp_wgts # dims: (n,3s+1) @ (3s+1, 15) = (n,15)
         # Interpret output
-        K = np.vstack((
-            D[0:3,:] == np.max(D[0:3,:], axis=0, keepdims=True),
-            D[3:7,:] == np.max(D[3:7,:], axis=0, keepdims=True),
-            D[7:11,:] == np.max(D[7:11,:], axis=0, keepdims=True),
-            D[11:15,:] == np.max(D[11:15,:], axis=0, keepdims=True),
-        ))
+        # - one hot in sections
+        K = np.hstack((onehot(D[:,0:3]), onehot(D[:,3:7]), onehot(D[:,7:11]), onehot(D[:,11:15])))
+        K = K.T # transpose to match Table 1 in paper, dims: (15, n)
         # - action choices
-        remove = K[1,:]
-        stay = K[2,:]
-        divide = K[3,:]
+        remove = K[0,:]
+        noaction = K[1,:]
+        divide = K[2,:]
         keep = np.hstack((np.logical_not(remove), divide))
         # - new node wiring
-        k_fi, k_fa, k_ft = K[4, :], K[5, :], K[6, :]
-        k_bi, k_ba, k_bt = K[8, :], K[9, :], K[10,:]
-        k_ni, k_na, k_nt = K[12,:], K[13,:], K[14,:]
+        k_f0, k_fi, k_fa, k_ft = K[3, :], K[4, :], K[5, :], K[6, :]
+        k_b0, k_bi, k_ba, k_bt = K[7, :], K[8, :], K[9, :], K[10,:]
+        k_n0, k_ni, k_na, k_nt = K[11,:], K[12,:], K[13,:], K[14,:]
         # Restructure adjacency matrix
         I = np.eye(G.size())
         Qm = np.array([[1,0],[0,0]])
@@ -228,21 +282,21 @@ class DGCA:
         Qn = np.array([[0,0],[0,1]])
         A, S = G.A, G.S
         A_new = np.kron(Qm, A) \
-            + np.kron(Qf, (I*np.diag(k_fi) + A*np.diag(k_fa) + A.T*np.diag(k_ft))) \
-            + np.kron(Qb, (I*np.diag(k_bi) + A*np.diag(k_ba) + A.T*np.diag(k_bt))) \
-            + np.kron(Qn, (I*np.diag(k_ni) + A*np.diag(k_na) + A.T*np.diag(k_nt)));  
+            + np.kron(Qf, (I @ np.diag(k_fi) + A @ np.diag(k_fa) + A.T @ np.diag(k_ft))) \
+            + np.kron(Qb, (np.diag(k_bi) @ I + np.diag(k_ba) @ A + np.diag(k_bt) @ A.T)) \
+            + np.kron(Qn, (np.diag(k_ni) @ I + np.diag(k_na) @ A + np.diag(k_nt) @ A.T))
         # keep only the nodes we need
         A_new = A_new[keep,:][:,keep]
         # Duplicate relevant cols of state matrix
-        S_new = np.hstack((S, S))
-        S_new = S_new[:,keep]
+        S_new = np.vstack((S, S))
+        S_new = S_new[keep,:]
         return GraphDef(A_new, S_new)
 
     def state_update(self, G: GraphDef) -> tuple[np.ndarray, np.ndarray]:
         C = self.gather_neighbourhood_info(G, self.state_info_bidirectional, self.state_info_renorm)
-        D = self.state_slp_wgts @ C
+        D = C @ self.state_slp_wgts #dims: (n,3s+1) @ (3s+1, s) = (n,s)
         # Make one-hot
-        S_new = D==np.max(D, axis=0, keepdims=True)
+        S_new = onehot(D)
         return GraphDef(G.A, S_new)
 
     def step(self, G: GraphDef) -> tuple[np.ndarray, np.ndarray]:
@@ -250,6 +304,12 @@ class DGCA:
         Simply performs an action update followed by a state update
         """
         return self.state_update(self.action_update(G))
+    
+    def encode(self) -> str:
+        """
+        Serialises the model using jsonpickle
+        """
+        return jsonpickle.encode(self)
     
 
 class Runner:
@@ -264,6 +324,7 @@ class Runner:
         self.graphs: list[GraphDef] = []
         self.hashes: list[int] = []
         self.status = 'ready'
+        self.hash_offset = 1
     
     def record(self, G: GraphDef) -> None:
         """
@@ -277,16 +338,29 @@ class Runner:
         self.hashes: list[int] = []
         self.status = 'ready'
 
-    def already_seen(self, G: GraphDef) -> None:
+    def already_seen(self, G: GraphDef) -> tuple[bool,bool]:
+        """
+        Checks if we have already seen this graph
+        """
         this_hash = G.state_hash()
         if this_hash in self.hashes:
-            possible_match = self.graphs[self.hashes.index(this_hash)]
-            iso = G.is_isomorphic(possible_match)
-            if not iso:
-                # The quick hash check gave a false positive.
-                # TODO: change the hash
-                pass
-            return iso
+            match_idx = [i for i,x in enumerate(self.hashes) if x==this_hash]
+            iso_tf = []
+            for m in match_idx:
+                try:
+                    is_iso = G.is_isomorphic(self.graphs[m])
+                    if not is_iso:
+                        # We got a false positive from the hash comparison so rehash the one in the archive
+                        self.hashes[m] = hash(self.hashes[m]+  self.hash_offset) # get a new hash value by hashing the original hash value!
+                        self.hash_offset += 1
+                    iso_tf.append(is_iso)
+                except TimeoutError:
+                    # Isomorphism check timed out. 
+                    # Assume it IS isomorphic to be safe
+                    iso_tf.append(True)
+                    print('Warning: isomorphism check timed out')
+            any_iso = any(iso_tf)
+            return any_iso
         else:
             return False
 
@@ -347,22 +421,35 @@ class Runner:
             attr_len = 0
         trans_len = len(self.hashes) - attr_len
         return trans_len, attr_len
-# %%
-for i in tqdm(range(1000)):
-    dgca = DGCA(num_states=3)
-    seed = GraphDef(np.array([[1,1,0],[0,0,1],[1,0,0]]), np.array([[1,0,0],[0,1,0],[0,1,0]]).T)
-    runner = Runner(max_steps=100, max_size=500)
-    out = runner.run(dgca, seed)
-    if runner.status=='attractor' and out.size()>100:
-        break
-print(out)
-print(f"{runner.status} after {len(runner.hashes)} steps")
-#%%#
-g = out.to_gt()
-gt.remove_self_loops(g)
-gt.graph_draw(g, vertex_fill_color=g.vp.plot_colour)
-# 1, 2, 3, 2f, 4, 5, 2
+# # %%
+# for i in tqdm(range(1000)):
+#     seed = GraphDef(np.array([[1,1,0],[0,0,1],[1,0,0]]), np.array([[1,0],[0,1],[0,1]]))
+#     dgca = DGCA(num_states=seed.num_states)
+#     runner = Runner(max_steps=100, max_size=500)
+#     out = runner.run(dgca, seed)
+#     if runner.status=='attractor' and out.size()>100:
+#         break
+# print(out)
+# print(f"{runner.status} after {len(runner.hashes)} steps")
+# #%%#
+# g = out.to_gt()
+# gt.remove_self_loops(g)
+# gt.graph_draw(g, vertex_fill_color=g.vp.plot_colour)
+# # 1, 2, 3, 2f, 4, 5, 2
 
+# # %%
+# g.save('blah4.dot')
 # %%
-g.save('blah4.dot')
+if __name__=='__main__':
+    print('Demo')
+    g0 = GraphDef(np.array([[1,1,0],[0,0,1],[1,0,0]]), np.array([[1,0],[0,1],[0,1]]))
+    print('Seed graph (step 0):')
+    g0.draw_gt()
+    dgca = DGCA(num_states=g0.num_states)
+    g1 = dgca.step(g0)
+    print('Step 1:')
+    g1.draw_gt()
+    g2 = dgca.step(g1)
+    print('Step 2:')
+    g2.draw_gt()
 # %%

@@ -56,8 +56,8 @@ for step=1:nsteps
   I = eye(rows(A));
   A = kron(Qm, A) ...
     + kron(Qf, (I*diag(k_fi) + A*diag(k_fa) + A'*diag(k_ft))) ...
-    + kron(Qb, (I*diag(k_bi) + A*diag(k_ba) + A'*diag(k_bt))) ... # NO! some of these need to be other way around..
-    + kron(Qn, (I*diag(k_ni) + A*diag(k_na) + A'*diag(k_nt)));  
+    + kron(Qb, (diag(k_bi)*I + diag(k_ba)*A + diag(k_bt)*A')) ... # NO! some of these need to be other way around..
+    + kron(Qn, (diag(k_ni)*I + diag(k_na)*A + diag(k_nt)*A'));  
   A = A(keep, keep);
   S = [S,S];
   S = S(:,keep);

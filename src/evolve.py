@@ -12,7 +12,25 @@ from graph_tool.all import Graph
 import jsonpickle
 import jsonpickle.ext.numpy as jsonpickle_numpy
 jsonpickle_numpy.register_handlers()
-from dgca import DGCA, Runner, GraphDef
+from .dgca import DGCA, Runner, GraphDef
+
+def rmse(p: np.ndarray, q: np.ndarray) -> float:
+    return np.sqrt(np.mean(np.power(p - q, 2)))
+
+def mean_absolute_error(p: np.ndarray, q: np.ndarray) -> float:
+    return np.mean(np.abs(p - q))
+
+def canberra_distance(p: np.ndarray, q: np.ndarray) -> float:
+    """
+    Distance between two vectors. 
+    https://en.wikipedia.org/wiki/Canberra_distance
+    Used by @shellmanMetabolicNetworkMotifs2014 to compare motif
+    significance profile similarity.
+    Maybe I should use this rather than MAE.
+    Also available as
+    >>> from scipy.spatial.distance import canberra
+    """
+    return np.sum(np.abs(p-q) / (np.abs(p) + np.abs(q)))
 
 @dataclass
 class Chromosome:
@@ -85,14 +103,47 @@ class GraphFitness(ABC):
     """
     def __init__(self, high_good: bool):
         self.high_good = high_good
+        self.skip_count = 0
 
     @abstractmethod
-    def __call__(self, graph: GraphDef) -> float:
+    def __call__(self, graph: GraphDef) -> tuple[float,...]:
         raise NotImplementedError
-    
 
-def mean_absolute_error(p: np.ndarray, q: np.ndarray) -> float:
-    return np.mean(np.abs(p - q))
+
+def check_conditions(gd: GraphDef, conditions: dict[str, float], 
+                     verbose: bool = False) -> bool:
+    size = gd.size()
+    conn = gd.connectivity()
+    frag = gd.get_largest_component_frac()
+    if 'max_size' in conditions:
+        # should already be fine but double check
+        if gd.size() > conditions['max_size']:
+            if verbose:
+                print('Graph too big (should not happen!)')
+            return False
+    if 'min_size' in conditions:
+        if gd.size() < conditions['min_size']:
+            if verbose:
+                print('Graph too small.')
+            return False
+    if 'min_connectivity' in conditions:
+        if gd.connectivity() < conditions['min_connectivity']:
+            if verbose:
+                print('Graph too sparse')
+            return False
+    if 'max_connectivity' in conditions:
+        if gd.connectivity() > conditions['max_connectivity']:
+            if verbose:
+                print('Graph too dense')
+            return False
+    if 'min_component_frac' in conditions:
+        if gd.get_largest_component_frac() < conditions['min_component_frac']:
+            if verbose:
+                print('Graph too fragmented')
+            return False
+    if verbose:
+        print(f'Graph OK: size={size}, conn={conn*100:.2f}%, frag={frag:.2f}')
+    return True
 
 
 class SignificanceProfileFitness(GraphFitness):
@@ -102,8 +153,7 @@ class SignificanceProfileFitness(GraphFitness):
     def __init__(self,
                  target_sig_prof: np.ndarray,
                  zscore_func: Callable[[Graph], tuple],
-                 err_func: Callable[[np.ndarray, np.ndarray], float],
-                 csv_filename: str,
+                 err_func: Callable[[np.ndarray, np.ndarray], float] = mean_absolute_error,
                  self_loops: bool = False,
                  conditions: dict = dict(),
                  verbose: bool = False
@@ -118,16 +168,14 @@ class SignificanceProfileFitness(GraphFitness):
         self.self_loops = self_loops
         self.conditions = conditions
         self.verbose = verbose
-        self.skip_count = 0
         self.high_good = False # because we will return mean abs error
         self.memo = {'fitness':[], 'sig_prof':[], 'graph':[], 'model':[]}
-        self.csv_filename = csv_filename
-        print(f'CSV results will be written to: {self.csv_filename}')
+
 
     def __call__(self, graph: GraphDef) -> float:
         if not self.self_loops:
             graph = graph.no_selfloops()
-        checks_ok = self.check_conditions(graph)
+        checks_ok = check_conditions(graph,self.conditions)
         if checks_ok:
             if self.verbose:
                 print('Calculating motif significance')
@@ -135,62 +183,13 @@ class SignificanceProfileFitness(GraphFitness):
             zscores = np.array(res[1])
             sig_prof = zscores / np.linalg.norm(zscores, keepdims=True)
             err = self.err_func(sig_prof, self.target_sig_prof)
-            # Save some stuff.
-            self.memo['fitness'].append(err)
-            self.memo['sig_prof'].append(sig_prof)
-            self.memo['graph'].append(graph)
-            self.memo['model'].append(jsonpickle.encode(model))
-            # New: save csv row of MAE,zscore1,zscroe2,... (zscores not sig prof so that we can calc |z|)
-            csv_row = (f'{err:.5f}\t'
-                       +'\t'.join(['%.5f' % num for num in zscores])
-                       +'\t'+jsonpickle.encode(model)
-                       +'\t'+jsonpickle.encode(graph)
-                       +'\t'+f'{self.skip_count}' # so that we can keep track of how many we are skipping.
-                       +'\n')
-            with open(self.csv_fn,'a') as fh:
-                fh.write(csv_row)
-                fh.flush() # I think this updates it immediately (good if we want to read as we go along)
             if self.verbose:
                 print(f'Skipped {self.skip_count}')
             self.skip_count = 0
         else:
             self.skip_count += 1
             err = np.nan
-        return err
-    
-    def check_conditions(self, gd: v4.GraphDef) -> bool:
-        size = gd.get_size()
-        conn = gd.connectivity()
-        frag = gd.get_largest_component_frac()
-        if 'max_size' in self.conditions:
-            # should already be fine but double check
-            if gd.get_size() > self.conditions['max_size']:
-                if self.verbose:
-                    print('Graph too big (should not happen!)')
-                return False
-        if 'min_size' in self.conditions:
-            if gd.get_size() < self.conditions['min_size']:
-                if self.verbose:
-                    print('Graph too small.')
-                return False
-        if 'min_connectivity' in self.conditions:
-            if gd.connectivity() < self.conditions['min_connectivity']:
-                if self.verbose:
-                    print('Graph too sparse')
-                return False
-        if 'max_connectivity' in self.conditions:
-            if gd.connectivity() > self.conditions['max_connectivity']:
-                if self.verbose:
-                    print('Graph too dense')
-                return False
-        if 'min_component_frac' in self.conditions:
-            if gd.get_largest_component_frac() < self.conditions['min_component_frac']:
-                if self.verbose:
-                    print('Graph too fragmented')
-                return False
-        if self.verbose:
-            print(f'Graph OK: size={size}, conn={conn*100:.2f}%, frag={frag:.2f}')
-        return True
+        return err, zscores
 
 
 class ChromosomalMGA:
@@ -200,12 +199,14 @@ class ChromosomalMGA:
                   seed_graph: GraphDef,
                   runner: Runner,
                   fitness_fn: GraphFitness,
-                  mutate_rate: float, cross_rate: float, cross_style: str):
+                  mutate_rate: float, cross_rate: float, cross_style: str,
+                  csv_filename: str | None = None):
         self.popsize = popsize
         self.model = model
         self.seed_graph = seed_graph
         self.runner = runner
         self.fitness_fn = fitness_fn
+        self.csv_filename = csv_filename
         # Comparison funcs are nan tolerant
         if self.fitness_fn.high_good:
             self.better = lambda a, b: np.isnan(b) or a>=b
@@ -215,6 +216,8 @@ class ChromosomalMGA:
         self.pop_chromosomes = np.array([[bc.get_new() for _ in range(self.popsize)] for bc in self.base_chromosomes]).T
         self.num_chromosomes = len(self.base_chromosomes)
         self.fitness_record = [] # 
+        if self.csv_filename is not None:
+            print(f'CSV results will be written to: {self.csv_filename}')
 
     def run(self, steps: int) -> list[float]:
         pbar = tqdm(range(steps),postfix={'fit':0,'best':0})
@@ -261,11 +264,26 @@ class ChromosomalMGA:
         """
         self.model.set_chromosomes(*chromosomes)
         self.runner.reset()
-        self.runner.run(self.model, self.seed_graph)
-        final_graph = self.runner.graphs[-1]
-        fitness = self.fitness_fn(final_graph)
+        final_graph = self.runner.run(self.model, self.seed_graph)
+        fitness, info = self.fitness_fn(final_graph)
         # Update each chromosome's best_fitness score
         for chr in chromosomes:
             if self.better(fitness, chr.best_fitness):
                 chr.best_fitness = fitness
+        if np.isnan(fitness) and (self.csv_filename is not None):
+            # Save some stuff.
+            # self.memo['fitness'].append(fitness)
+            # self.memo['sig_prof'].append(info)
+            # self.memo['graph'].append(final_graph)
+            # self.memo['model'].append(jsonpickle.encode(self.model))
+            # New: save csv row of MAE,zscore1,zscroe2,... (zscores not sig prof so that we can calc |z|)
+            csv_row = (f'{fitness:.5f}\t'
+                    +'\t'.join(['%.5f' % num for num in info])
+                    +'\t'+jsonpickle.encode(self.model)
+                    +'\t'+jsonpickle.encode(final_graph)
+                    +'\t'+f'{self.fitness_fn.skip_count}' # so that we can keep track of how many we are skipping.
+                    +'\n')
+            with open(self.csv_filename,'a') as fh:
+                fh.write(csv_row)
+                fh.flush() # I think this updates it immediately (good if we want to read as we go along)
         return fitness
