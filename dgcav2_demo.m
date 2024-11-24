@@ -54,9 +54,10 @@ for step=1:nsteps
   k_nt = K(15,:);
   % Restructure matrix
   I = eye(rows(A));
+  # Equation 7 from paper.
   A = kron(Qm, A) ...
     + kron(Qf, (I*diag(k_fi) + A*diag(k_fa) + A'*diag(k_ft))) ...
-    + kron(Qb, (diag(k_bi)*I + diag(k_ba)*A + diag(k_bt)*A')) ... # NO! some of these need to be other way around..
+    + kron(Qb, (diag(k_bi)*I + diag(k_ba)*A + diag(k_bt)*A')) ...
     + kron(Qn, (diag(k_ni)*I + diag(k_na)*A + diag(k_nt)*A'));  
   A = A(keep, keep);
   S = [S,S];

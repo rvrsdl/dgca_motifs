@@ -47,8 +47,9 @@ def plan_tuple_plot_signifigance_profile(zscores: np.ndarray, ax,
 #%%
 
 #fn = 'results_20241120_181917.p'
-fn = 'results_20241122_154827.p'
+#fn = 'results_20241122_154827.p'
 #fn = 'results_20241122_173057.p'
+fn = 'results_20241124_225236.p'
 with open(os.path.join(RESULTS_DIR,fn), 'rb') as handle:
     results = pickle.load(handle)
 
@@ -64,3 +65,5 @@ ax.set_title('Triad Significance Profile')
 ax.set_ylabel('Motif Number')
 ax.set_xlabel('Grown Graphs (sorted by Significance Profile)')
 fig.savefig(os.path.join(RESULTS_DIR,fn[:-2]+'.pdf'))
+
+# %%
