@@ -176,6 +176,7 @@ class SignificanceProfileFitness(GraphFitness):
         if not self.self_loops:
             graph = graph.no_selfloops()
         checks_ok = check_conditions(graph,self.conditions)
+        zscores = []
         if checks_ok:
             if self.verbose:
                 print('Calculating motif significance')
@@ -234,12 +235,12 @@ class ChromosomalMGA:
         """
         # Select two sets of chromosomes at random
         idx = np.random.randint(low=0,high=self.popsize,size=(2,self.num_chromosomes))
-        contestant_chromosomes : list[list[Chromosome]] = np.take_along_axis(self.pop_chromosomes, idx, axis=0).tolist()
+        contestant_chromosomes = np.take_along_axis(self.pop_chromosomes, idx, axis=0)
         fitness = (np.nan, np.nan)
         while np.all(np.isnan(fitness)):
             fitness = self.run_individual(contestant_chromosomes[0]), self.run_individual(contestant_chromosomes[1])
             # If both contestants' fitness is NaN then mutate the chromosomes
-            # and try again (in this while loop so that it deosn't count as an iteration in run())
+            # and try again (in this while loop so that it doesn't count as an iteration in run())
             if np.all(np.isnan(fitness)):
                 for chr in contestant_chromosomes.flat:
                     if not np.isnan(chr.best_fitness):
@@ -270,7 +271,7 @@ class ChromosomalMGA:
         for chr in chromosomes:
             if self.better(fitness, chr.best_fitness):
                 chr.best_fitness = fitness
-        if np.isnan(fitness) and (self.csv_filename is not None):
+        if not(np.isnan(fitness)) and (self.csv_filename is not None):
             # Save some stuff.
             # self.memo['fitness'].append(fitness)
             # self.memo['sig_prof'].append(info)
@@ -283,6 +284,7 @@ class ChromosomalMGA:
                     +'\t'+jsonpickle.encode(final_graph)
                     +'\t'+f'{self.fitness_fn.skip_count}' # so that we can keep track of how many we are skipping.
                     +'\n')
+            #print(csv_row)
             with open(self.csv_filename,'a') as fh:
                 fh.write(csv_row)
                 fh.flush() # I think this updates it immediately (good if we want to read as we go along)
