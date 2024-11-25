@@ -34,7 +34,8 @@ motifs13 = list(generate_named_triads().values())
 zscore_func = partial(gt.motif_significance, k=3, n_shuffles=NUM_SHUFFLES, p=RAND_ESU, motif_list=motifs13)
 fitness_fn = SignificanceProfileFitness(target_sig_prof=TSP['ecoli'], 
                                         zscore_func=zscore_func,
-                                        conditions=conditions)
+                                        conditions=conditions,
+                                        verbose=True)
 seed_graph = GraphDef(A=np.array([[0]]), S=np.array([[1,0,0]]), num_states=3)
 model = EvolvableDGCA(num_states=seed_graph.num_states)
 runner = Runner(max_steps=100, max_size=300)
@@ -47,6 +48,7 @@ mga = ChromosomalMGA(popsize=POPULATION_SIZE,
                      cross_rate=CROSS_RATE,
                      cross_style=CROSS_STYLE,
                      csv_filename=results_fn)
+#%%
 mga.run(steps=NUM_TRIALS)
 
 # %%

@@ -46,8 +46,11 @@ class Chromosome:
     crossover_style: str
     best_fitness: np.float32 = np.nan
 
-    def mutate(self) -> Chromosome:
-        mask = np.random.choice([True, False], p=[self.mutate_rate, 1-self.mutate_rate], size=self.data.shape)
+    def mutate(self,rate: float | None = None) -> Chromosome:
+        # Can override default mutation rate in call.
+        if rate is None:
+            rate = self.mutate_rate
+        mask = np.random.choice([True, False], p=[rate, 1-rate], size=self.data.shape)
         random = np.random.uniform(size=self.data.shape, low=-1, high=1).astype(np.float32)
         self.data[mask] = random[mask]
         self.best_fitness = np.nan
@@ -175,7 +178,7 @@ class SignificanceProfileFitness(GraphFitness):
     def __call__(self, graph: GraphDef) -> float:
         if not self.self_loops:
             graph = graph.no_selfloops()
-        checks_ok = check_conditions(graph,self.conditions)
+        checks_ok = check_conditions(graph,self.conditions, verbose=self.verbose)
         zscores = []
         if checks_ok:
             if self.verbose:
@@ -224,7 +227,7 @@ class ChromosomalMGA:
         pbar = tqdm(range(steps),postfix={'fit':0,'best':0})
         for s in pbar:
             f = self.contest()
-            best_fitness = np.max(self.records['fitness']) if self.fit_fn.high_good else np.min(self.records['fitness'])
+            best_fitness = np.max(self.fitness_record) if self.fitness_fn.high_good else np.min(self.fitness_record)
             pbar.set_postfix({'fit':f,'best':best_fitness})
         return self.records['fitness']
 
@@ -243,9 +246,9 @@ class ChromosomalMGA:
             # and try again (in this while loop so that it doesn't count as an iteration in run())
             if np.all(np.isnan(fitness)):
                 for chr in contestant_chromosomes.flat:
-                    if not np.isnan(chr.best_fitness):
-                        chr.mutate() 
-        win, lose = 0,1 if self.better(*fitness) else 1,0
+                    if np.isnan(chr.best_fitness):
+                        chr.mutate(rate=1.0) # do 100% mutation in this case
+        win, lose = (0,1) if self.better(*fitness) else (1,0)
         for c in range(self.num_chromosomes):
             if idx[win,c]==idx[lose,c]:
                 # These two chromosomes were the same, so don't change anything
@@ -272,6 +275,7 @@ class ChromosomalMGA:
             if self.better(fitness, chr.best_fitness):
                 chr.best_fitness = fitness
         if not(np.isnan(fitness)) and (self.csv_filename is not None):
+            self.fitness_record.append(fitness)
             # Save some stuff.
             # self.memo['fitness'].append(fitness)
             # self.memo['sig_prof'].append(info)

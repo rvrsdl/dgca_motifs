@@ -55,7 +55,7 @@ import matplotlib.pyplot as plt
 from src.dgca import DGCA, GraphDef, Runner
 
 seed_graph = GraphDef(np.array([[1,1,0],[0,0,1],[1,0,0]]), np.array([[1,0],[0,1],[0,1]]))
-dgca = DGCA(num_states=g0.num_states)
+dgca = DGCA(num_states=seed_graph.num_states)
 runner = Runner(max_steps=200, max_size=128)
 
 final_graph = runner.run(dgca, seed_graph)

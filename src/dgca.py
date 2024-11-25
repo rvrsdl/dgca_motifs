@@ -25,10 +25,11 @@ def rindex(it, li) -> int:
 
 def onehot(x: np.ndarray) -> np.ndarray:
     """
-    One-hot helper function. Turns an array of floats into a boolean array with 
-    one True value per row (in the location of the highest valued float of each row).
+    One-hot helper function. Turns an array of floats into a binary array with 
+    a single 1 per row (in the location of the highest valued float of each row).
     """
-    return x == np.max(x, axis=1, keepdims=True)
+    tf = x == np.max(x, axis=1, keepdims=True)
+    return tf.astype(int)
 
 @dataclass
 class GraphDef:
@@ -108,7 +109,7 @@ class GraphDef:
         different).
         """
         info = DGCA.gather_neighbourhood_info(self, bidirectional=True, renorm=False)
-        return hash(FrozenMultiset(map(tuple, info.T.tolist())))
+        return hash(FrozenMultiset(map(tuple, info.tolist())))
     
     def to_edgelist(self) -> np.ndarray:
         """
@@ -269,7 +270,7 @@ class DGCA:
         remove = K[0,:]
         noaction = K[1,:]
         divide = K[2,:]
-        keep = np.hstack((np.logical_not(remove), divide))
+        keep = np.hstack((np.logical_not(remove), divide)).astype(bool)
         # - new node wiring
         k_f0, k_fi, k_fa, k_ft = K[3, :], K[4, :], K[5, :], K[6, :]
         k_b0, k_bi, k_ba, k_bt = K[7, :], K[8, :], K[9, :], K[10,:]
@@ -286,7 +287,7 @@ class DGCA:
             + np.kron(Qb, (np.diag(k_bi) @ I + np.diag(k_ba) @ A + np.diag(k_bt) @ A.T)) \
             + np.kron(Qn, (np.diag(k_ni) @ I + np.diag(k_na) @ A + np.diag(k_nt) @ A.T))
         # keep only the nodes we need
-        A_new = A_new[keep,:][:,keep]
+        A_new = A_new[keep,:][:,keep] # logical indexing to keep only the row/cols we need.
         # Duplicate relevant cols of state matrix
         S_new = np.vstack((S, S))
         S_new = S_new[keep,:]
@@ -323,15 +324,25 @@ class Runner:
         self.max_size = max_size
         self.graphs: list[GraphDef] = []
         self.hashes: list[int] = []
+        self.ids: list[int] = []
         self.status = 'ready'
         self.hash_offset = 1
     
-    def record(self, G: GraphDef) -> None:
+    def record(self, G: GraphDef, duplicate_of: int | None = None) -> None:
         """
         Adds the graph and its hash to the records.
         """
+        # Figure out the id number
+        if len(self.ids)==0:
+            self.ids.append(0)
+        elif duplicate_of or duplicate_of==0:
+            # This graph is isomorphic to one we have already seen
+            self.ids.append(self.ids[duplicate_of])
+        else: 
+            self.ids.append(max(self.ids)+1)
         self.graphs.append(G)
         self.hashes.append(G.state_hash())
+        
 
     def reset(self):
         self.graphs: list[GraphDef] = []
@@ -351,8 +362,9 @@ class Runner:
                     is_iso = G.is_isomorphic(self.graphs[m])
                     if not is_iso:
                         # We got a false positive from the hash comparison so rehash the one in the archive
-                        self.hashes[m] = hash(self.hashes[m]+  self.hash_offset) # get a new hash value by hashing the original hash value!
-                        self.hash_offset += 1
+                        # self.hashes[m] = hash(self.hashes[m]+  self.hash_offset) # get a new hash value by hashing the original hash value!
+                        # self.hash_offset += 1
+                        pass
                     iso_tf.append(is_iso)
                 except TimeoutError:
                     # Isomorphism check timed out. 
@@ -360,9 +372,13 @@ class Runner:
                     iso_tf.append(True)
                     print('Warning: isomorphism check timed out')
             any_iso = any(iso_tf)
-            return any_iso
+            if any_iso:
+                idx = match_idx[iso_tf.index(True)]
+            else:
+                idx = None
+            return any_iso, idx
         else:
-            return False
+            return False, None
 
     def run(self, dgca: DGCA, seed_graph: GraphDef) -> GraphDef:
         """
@@ -381,11 +397,12 @@ class Runner:
                 self.status = 'max_size'
                 self.record(next_graph)
                 return current_graph # because next_graph is too big
-            if self.already_seen(next_graph):
+            already_seen, match_idx = self.already_seen(next_graph)
+            if already_seen:
                 # We are in an attractor so no need to go further
                 # Add it to the record anyway so that we can spot the cycle
                 self.status = 'attractor'
-                self.record(next_graph)
+                self.record(next_graph, duplicate_of=match_idx)
                 return next_graph
             self.record(next_graph)
             current_graph = next_graph
@@ -414,12 +431,12 @@ class Runner:
         """
         if self.status == 'ready':
             print("Hasn't been run yet!")
-        if self.hashes[-1] in self.hashes[:-1]:
-            ind = rindex(self.hashes[-1], self.hashes[:-1])
-            attr_len = len(self.hashes) - 1 - ind
+        if self.ids[-1] in self.ids[:-1]:
+            ind = rindex(self.ids[-1], self.ids[:-1])
+            attr_len = len(self.ids) - 1 - ind
         else:
             attr_len = 0
-        trans_len = len(self.hashes) - attr_len
+        trans_len = len(self.ids) - attr_len - 1
         return trans_len, attr_len
 # # %%
 # for i in tqdm(range(1000)):
