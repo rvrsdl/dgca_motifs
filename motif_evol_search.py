@@ -8,7 +8,7 @@ import zstandard # Not used directly but need to import before graph_tool to pre
 import graph_tool.all as gt
 from src.dgca import DGCA, GraphDef, Runner
 from src.evolve import EvolvableDGCA, SignificanceProfileFitness, ChromosomalMGA
-from src.motifs import generate_named_triads
+from src.motifs import generate_named_triads, target_tsp
 
 PROJ_DIR = os.path.dirname(os.path.abspath(__file__))
 #%%
@@ -20,9 +20,7 @@ CROSS_STYLE = 'cols'
 NUM_TRIALS = 5000
 NUM_SHUFFLES = 500
 RAND_ESU = [1.0,1.0,0.5]
-TSP = {
-    'ecoli': np.array([-0.613, -0.377, -0.313, 0.620, -0.010, -0.015, -0.001, -0.001, -0.000, 0.000, 0.000, 0.000, 0.000])
-}
+
 timestr = datetime.now().strftime('%Y%m%d_%H%M%S')
 results_fn = os.path.join(PROJ_DIR,'results', f'results_{timestr}.csv')
 conditions = {'max_size': 300, 
@@ -32,10 +30,10 @@ conditions = {'max_size': 300,
               'min_component_frac': 0.4}
 motifs13 = list(generate_named_triads().values())
 zscore_func = partial(gt.motif_significance, k=3, n_shuffles=NUM_SHUFFLES, p=RAND_ESU, motif_list=motifs13)
-fitness_fn = SignificanceProfileFitness(target_sig_prof=TSP['ecoli'], 
+fitness_fn = SignificanceProfileFitness(target_sig_prof=target_tsp['ecoli'], 
                                         zscore_func=zscore_func,
                                         conditions=conditions,
-                                        verbose=True)
+                                        verbose=False)
 seed_graph = GraphDef(A=np.array([[0]]), S=np.array([[1,0,0]]), num_states=3)
 model = EvolvableDGCA(num_states=seed_graph.num_states)
 runner = Runner(max_steps=100, max_size=300)

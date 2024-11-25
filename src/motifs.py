@@ -248,6 +248,12 @@ def gt2milo_sortix() -> list[int]:
     Returns a sortix for converting gt motif order to Milo order
     """
     return [motif_sort('gt').index(k) for k in motif_sort('milo')]
+
+target_tsp = {
+    'ecoli': np.array([-0.613, -0.377, -0.313, 0.620, -0.010, -0.015, -0.001, -0.001, -0.000, 0.000, 0.000, 0.000, 0.000]),
+    'yeast': np.array([-0.561, -0.453, -0.418, 0.537, -0.008, 0.121, -0.001, 0.040, -0.000, 0.000, 0.040, 0.000, 0.000]),
+    'celegans': np.array([-0.341, -0.364, -0.230, 0.001, 0.145, 0.100, -0.151, 0.552, 0.367, 0.179, 0.079, 0.316, 0.259])
+}
 # %%
 # # FOr paper
 # names = ['V-Out',
@@ -283,3 +289,57 @@ def gt2milo_sortix() -> list[int]:
 # fig.savefig('13Triads7.pdf')
 
 # %%
+
+# # example with natural networks:
+# ecoli = gt.collection.ns["ecoli_transcription/v1.1"]
+# yeast = gt.collection.ns["yeast_transcription"]
+# celegans = gt.collection.ns["celegansneural"]
+# tadpole = gt.collection.ns["cintestinalis"]
+# gt.remove_self_loops(ecoli)
+# gt.remove_self_loops(yeast)
+# gt.remove_self_loops(celegans)
+# gt.remove_self_loops(tadpole)
+# m13 = list(generate_named_triads().values())
+# #p= [0.9,0.8,0.7]
+# p=1.0 # Do comprehensive search to get canonical values
+# ecoli_res = gt.motif_significance(ecoli, k=3, n_shuffles=500, p=p, motif_list=m13, full_output=True)
+# yeast_res = gt.motif_significance(yeast, k=3, n_shuffles=500, p=p, motif_list=m13, full_output=True)
+# celegans_res = gt.motif_significance(celegans, k=3, n_shuffles=500, p=p, motif_list=m13, full_output=True)
+# tadpole_res = gt.motif_significance(tadpole, k=3, n_shuffles=500, p=p, motif_list=m13, full_output=True)
+# ecoli_znorm = np.linalg.norm(ecoli_res[1]) # 18.193266239490832
+# ecoli_sp = ecoli_res[1] / ecoli_znorm # [-0.613, -0.377, -0.313, 0.620, -0.010, -0.015, -0.001, -0.001, -0.000, 0.000, 0.000, 0.000, 0.000]
+# yeast_znorm = np.linalg.norm(yeast_res[1]) # 24.983090564010947
+# yeast_sp = yeast_res[1] / yeast_znorm # [-0.561, -0.453, -0.418, 0.537, -0.008, 0.121, -0.001, 0.040, -0.000, 0.000, 0.040, 0.000, 0.000]
+# celegans_znorm = np.linalg.norm(celegans_res[1]) #55.00486133710431
+# celegans_sp = celegans_res[1] / celegans_znorm #[-0.341, -0.364, -0.230, 0.001, 0.145, 0.100, -0.151, 0.552, 0.367, 0.179, 0.079, 0.316, 0.259]
+# tadpole_znorm = np.linalg.norm(tadpole_res[1]) # 56.78274753598695
+# tadpole_sp = tadpole_res[1] / tadpole_znorm # [-0.323, -0.289, -0.242, 0.040, 0.038, 0.068, -0.092, 0.378, 0.313, 0.062, 0.154, 0.350, 0.589]
+
+# # Canonicalvalues (gt order)
+# ecoli_sp = np.array([-0.613, -0.377, -0.313, 0.620, -0.010, -0.015, -0.001, -0.001, -0.000, 0.000, 0.000, 0.000, 0.000])
+# ecoli_znorm = 18.193266239490832
+# yeast_sp = np.array([-0.561, -0.453, -0.418, 0.537, -0.008, 0.121, -0.001, 0.040, -0.000, 0.000, 0.040, 0.000, 0.000])
+# yeast_znorm = 24.983090564010947
+# celegans_sp = np.array([-0.341, -0.364, -0.230, 0.001, 0.145, 0.100, -0.151, 0.552, 0.367, 0.179, 0.079, 0.316, 0.259])
+# celegans_znorm = 55.00486133710431
+# tadpole_sp = np.array([-0.323, -0.289, -0.242, 0.040, 0.038, 0.068, -0.092, 0.378, 0.313, 0.062, 0.154, 0.350, 0.589])
+# tadpole_znorm = 56.78274753598695
+# eom_sortix = [motif_sort('eom').index(k) for k in motif_sort('milo')]
+# eom_metabolic = np.array([-0.143,-0.453,-0.22,-0.237,0.287,0.017,-0.147,-0.303,0.05,0.393,-0.077,0.153,0.267])
+# triad_sortix = [motif_sort('gt').index(k) for k in motif_sort('milo')]
+# fig,ax = plt.subplots(figsize=(8,5))
+# x = list(range(1,14))
+# ax.plot(x, ecoli_sp[triad_sortix],'ro-', label=f'E.Coli transcription\n|Z|={ecoli_znorm:.2f}')
+# ax.plot(x, yeast_sp[triad_sortix],'k^--', label=f'Yeast transcription\n|Z|={yeast_znorm:.2f}')
+# ax.plot(x, celegans_sp[triad_sortix],'bx-',label=f'C.Elegans neural\n|Z|={celegans_znorm:.2f}')
+# ax.plot(x, tadpole_sp[triad_sortix],'g*--',label=f'C. Intestinalis neural\n|Z|={tadpole_znorm:.2f}')
+# #ax.plot(x, eom_metabolic[eom_sortix],'m+:', label='Average of 43 metabolic networks')
+# ax.grid(True)
+# ax.legend()
+# ax.set_title('Triad Significance Profile')
+# ax.set_ylabel('Normalised Z-Score')
+# ax.set_xticks(x)
+# ax.set_xlabel('Triad ID')
+# #xticklabels_13motifs(ax)
+# #plt.switch_backend('cairo')
+# fig.savefig('NaturalSignificanceProfile2.pdf')
