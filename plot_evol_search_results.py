@@ -55,6 +55,7 @@ def csv_res_plot(res_df, target=None,
 
 #%%
 fn = 'results_20241125_163856' 
+fn = 'results_20241126_085703'
 res = pd.read_csv(os.path.join(RESULTS_DIR,fn+'.csv'), 
                   delimiter='\t', header=0,index_col=None,
                   names=['MAE',*[f'Z{i}' for i in range(13)],'Model','Graph','Skipped'])
