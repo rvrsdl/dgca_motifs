@@ -347,6 +347,7 @@ class Runner:
     def reset(self):
         self.graphs: list[GraphDef] = []
         self.hashes: list[int] = []
+        self.ids: list[int] = []
         self.status = 'ready'
 
     def already_seen(self, G: GraphDef) -> tuple[bool,bool]:
