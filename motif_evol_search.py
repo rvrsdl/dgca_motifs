@@ -13,6 +13,7 @@ from src.motifs import generate_named_triads, target_tsp
 PROJ_DIR = os.path.dirname(os.path.abspath(__file__))
 #%%
 # Various settings
+VERBOSE = True
 POPULATION_SIZE = 30
 MUTATE_RATE = 0.02
 CROSS_RATE = 0.5
@@ -33,7 +34,7 @@ zscore_func = partial(gt.motif_significance, k=3, n_shuffles=NUM_SHUFFLES, p=RAN
 fitness_fn = SignificanceProfileFitness(target_sig_prof=target_tsp['ecoli'], 
                                         zscore_func=zscore_func,
                                         conditions=conditions,
-                                        verbose=False)
+                                        verbose=VERBOSE)
 seed_graph = GraphDef(A=np.array([[0]]), S=np.array([[1,0,0]]), num_states=3)
 model = EvolvableDGCA(num_states=seed_graph.num_states)
 runner = Runner(max_steps=100, max_size=300)
